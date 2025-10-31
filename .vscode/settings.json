@@ -1,0 +1,15 @@
+{
+  // Ensure the Java language server recognizes test sources as source roots
+  "java.project.sourcePaths": [
+    "src/main/java",
+    "src/test/java"
+  ],
+  // Add Maven dependencies copied to target/dependency as referenced libraries so the language server
+  // can resolve test-scoped dependencies like JUnit in the editor.
+  "java.project.referencedLibraries": [
+    "target/dependency/*.jar"
+  ],
+  "java.compile.nullAnalysis.mode": "automatic"
+  // Optional: disable automatic build validation if it causes noise (keep enabled by default)
+  // "java.autobuild.enabled": true
+}
