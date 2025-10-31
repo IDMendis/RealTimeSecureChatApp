@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Chat Test Client</title>
+    
+    <!-- 
+        TESTING INSTRUCTIONS:
+        
+        1. Start the Spring Boot server: mvn spring-boot:run
+        2. Open this file in 3 different browser tabs
+        3. In each tab:
+           - Enter a different username (e.g., Alice, Bob, Charlie)
+           - Click "Connect"
+           - Try joining different rooms or the public chat
+        
+        4. Test scenarios:
+           - Public messaging: Send to "Public" room
+           - Room messaging: Create/join a room (e.g., "general")
+           - Private messaging: Send to a specific username
+        
+        5. Observe server console logs for connection/routing information
+        
+        Network Concepts Demonstrated:
+        - WebSocket connection establishment (TCP handshake)
+        - STOMP protocol over WebSocket
+        - Publish-Subscribe pattern (topics)
+        - Point-to-point messaging (user queues)
+        - Connection lifecycle (connect, subscribe, disconnect)
+    -->
+    
+    <!-- SockJS and STOMP.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 800px;
+            width: 100%;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin-bottom: 10px;
+        }
+        
+        .connection-panel {
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .form-row input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        
+        .btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        
+        .status.disconnected {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .status.connected {
+            background: #28a745;
+            color: white;
+        }
+        
+        .chat-panel {
+            display: flex;
+            height: 500px;
+        }
+        
+        .sidebar {
+            width: 200px;
+            background: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+            padding: 15px;
+        }
+        
+        .sidebar h3 {
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #495057;
+        }
+        
+        .sidebar button {
+            width: 100%;
+            margin-bottom: 5px;
+        }
+        
+        .messages-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #fff;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            animation: slideIn 0.3s;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .message.chat {
+            background: #e3f2fd;
+            border-left: 3px solid #2196f3;
+        }
+        
+        .message.join {
+            background: #e8f5e9;
+            border-left: 3px solid #4caf50;
+        }
+        
+        .message.leave {
+            background: #fff3e0;
+            border-left: 3px solid #ff9800;
+        }
+        
+        .message.private {
+            background: #f3e5f5;
+            border-left: 3px solid #9c27b0;
+        }
+        
+        .message .meta {
+            font-size: 11px;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+        
+        .message .from {
+            font-weight: bold;
+            color: #495057;
+        }
+        
+        .message .content {
+            color: #212529;
+        }
+        
+        .input-panel {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+        }
+        
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-row input,
+        .input-row select {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .input-row select {
+            flex: 0 0 150px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 WebSocket Chat Test Client</h1>
+            <p>Spring Boot 3 + WebSocket + STOMP</p>
+        </div>
+        
+        <div class="connection-panel">
+            <div class="form-row">
+                <input type="text" id="username" placeholder="Enter your username (e.g., Alice)" />
+                <button class="btn btn-success" id="connectBtn" onclick="connect()">Connect</button>
+                <button class="btn btn-danger" id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            </div>
+            <div>
+                <span class="status disconnected" id="status">Disconnected</span>
+            </div>
+        </div>
+        
+        <div class="chat-panel">
+            <div class="sidebar">
+                <h3>Actions</h3>
+                <button class="btn btn-primary" onclick="subscribeToPublic()">Subscribe Public</button>
+                <button class="btn btn-primary" onclick="joinRoom()">Join Room</button>
+                <button class="btn btn-primary" onclick="clearMessages()">Clear Messages</button>
+                
+                <h3 style="margin-top: 20px;">Info</h3>
+                <div style="font-size: 11px; color: #6c757d;">
+                    <p>Open multiple tabs to test concurrent connections</p>
+                </div>
+            </div>
+            
+            <div class="messages-container">
+                <div class="messages" id="messages">
+                    <div style="text-align: center; color: #6c757d; padding: 20px;">
+                        <p>👆 Enter username and click Connect to start</p>
+                    </div>
+                </div>
+                
+                <div class="input-panel">
+                    <div class="input-row" style="margin-bottom: 10px;">
+                        <select id="messageType">
+                            <option value="public">Public</option>
+                            <option value="room">Room</option>
+                            <option value="private">Private</option>
+                        </select>
+                        <input type="text" id="target" placeholder="Room ID or Username (for room/private)" />
+                    </div>
+                    <div class="input-row">
+                        <input type="text" id="messageInput" placeholder="Type your message here..." onkeypress="handleKeyPress(event)" />
+                        <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let username = null;
+        let currentRoom = null;
+
+        /**
+         * Connect to WebSocket server.
+         * Demonstrates WebSocket handshake and STOMP connection.
+         */
+        function connect() {
+            username = document.getElementById('username').value.trim();
+            
+            if (!username) {
+                alert('Please enter a username');
+                return;
+            }
+            
+            // Create SockJS connection (provides fallback transports)
+            const socket = new SockJS('http://localhost:8080/ws');
+            
+            // Create STOMP client over SockJS
+            stompClient = Stomp.over(socket);
+            
+            // Connect to server
+            stompClient.connect({}, 
+                function(frame) {
+                    console.log('Connected: ' + frame);
+                    updateConnectionStatus(true);
+                    
+                    // Automatically subscribe to public topic and user queue
+                    subscribeToPublic();
+                    subscribeToUserQueue();
+                    
+                    addSystemMessage('Connected to server as ' + username);
+                },
+                function(error) {
+                    console.error('Connection error:', error);
+                    updateConnectionStatus(false);
+                    addSystemMessage('Connection error: ' + error);
+                }
+            );
+        }
+
+        /**
+         * Disconnect from WebSocket server.
+         */
+        function disconnect() {
+            if (stompClient !== null) {
+                stompClient.disconnect(function() {
+                    console.log('Disconnected');
+                    updateConnectionStatus(false);
+                    addSystemMessage('Disconnected from server');
+                });
+            }
+        }
+
+        /**
+         * Subscribe to public topic (/topic/public).
+         * Demonstrates broadcast messaging.
+         */
+        function subscribeToPublic() {
+            if (stompClient && stompClient.connected) {
+                stompClient.subscribe('/topic/public', function(messageOutput) {
+                    showMessage(JSON.parse(messageOutput.body));
+                });
+                addSystemMessage('Subscribed to public chat');
+            }
+        }
+
+        /**
+         * Subscribe to user-specific queue (/user/queue/messages).
+         * Demonstrates point-to-point messaging.
+         */
+        function subscribeToUserQueue() {
+            if (stompClient && stompClient.connected) {
+                stompClient.subscribe('/user/queue/messages', function(messageOutput) {
+                    showMessage(JSON.parse(messageOutput.body));
+                });
+                addSystemMessage('Subscribed to private messages');
+            }
+        }
+
+        /**
+         * Join a chat room.
+         */
+        function joinRoom() {
+            const roomId = prompt('Enter room ID (e.g., general):');
+            
+            if (!roomId || !stompClient || !stompClient.connected) {
+                return;
+            }
+            
+            currentRoom = roomId;
+            
+            // Subscribe to room topic
+            stompClient.subscribe('/topic/rooms.' + roomId, function(messageOutput) {
+                showMessage(JSON.parse(messageOutput.body));
+            });
+            
+            // Send join message
+            const joinMessage = {
+                type: 'JOIN',
+                from: username,
+                roomId: roomId,
+                content: username + ' joined room ' + roomId
+            };
+            
+            stompClient.send('/app/chat.join', {}, JSON.stringify(joinMessage));
+            
+            addSystemMessage('Joined room: ' + roomId);
+            
+            // Update target input
+            document.getElementById('target').value = roomId;
+            document.getElementById('messageType').value = 'room';
+        }
+
+        /**
+         * Send a chat message.
+         * Routes message based on type (public, room, private).
+         */
+        function sendMessage() {
+            const content = document.getElementById('messageInput').value.trim();
+            const messageType = document.getElementById('messageType').value;
+            const target = document.getElementById('target').value.trim();
+            
+            if (!content || !stompClient || !stompClient.connected) {
+                return;
+            }
+            
+            const message = {
+                type: messageType === 'private' ? 'PRIVATE' : 'CHAT',
+                from: username,
+                content: content
+            };
+            
+            // Set target based on message type
+            if (messageType === 'room') {
+                if (!target) {
+                    alert('Please enter a room ID');
+                    return;
+                }
+                message.roomId = target;
+            } else if (messageType === 'private') {
+                if (!target) {
+                    alert('Please enter a recipient username');
+                    return;
+                }
+                message.to = target;
+            }
+            
+            // Send message to server
+            stompClient.send('/app/chat.send', {}, JSON.stringify(message));
+            
+            // Clear input
+            document.getElementById('messageInput').value = '';
+        }
+
+        /**
+         * Display received message in UI.
+         */
+        function showMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + message.type.toLowerCase();
+            
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+            meta.textContent = new Date(message.timestamp).toLocaleTimeString();
+            
+            const from = document.createElement('div');
+            from.className = 'from';
+            from.textContent = message.from || 'System';
+            
+            const content = document.createElement('div');
+            content.className = 'content';
+            content.textContent = message.content;
+            
+            messageDiv.appendChild(meta);
+            messageDiv.appendChild(from);
+            messageDiv.appendChild(content);
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        /**
+         * Add system message to UI.
+         */
+        function addSystemMessage(text) {
+            const messagesDiv = document.getElementById('messages');
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.style.cssText = 'text-align: center; color: #6c757d; font-size: 12px; padding: 10px;';
+            messageDiv.textContent = text;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        /**
+         * Update connection status UI.
+         */
+        function updateConnectionStatus(connected) {
+            const statusSpan = document.getElementById('status');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const usernameInput = document.getElementById('username');
+            
+            if (connected) {
+                statusSpan.textContent = 'Connected as ' + username;
+                statusSpan.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                usernameInput.disabled = true;
+            } else {
+                statusSpan.textContent = 'Disconnected';
+                statusSpan.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                usernameInput.disabled = false;
+            }
+        }
+
+        /**
+         * Handle Enter key in message input.
+         */
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        /**
+         * Clear all messages.
+         */
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
