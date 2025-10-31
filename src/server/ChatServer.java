@@ -9,4 +9,3 @@ public class ChatServer {
         System.out.println("Chat Server initialized...");
     }
 }
-javac
